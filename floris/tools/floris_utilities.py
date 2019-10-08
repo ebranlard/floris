@@ -27,7 +27,7 @@ class FlorisInterface():
         self.input_file = input_file
         self.floris = Floris(input_file=input_file)
 
-    def calculate_wake(self, yaw_angles=None, no_wake=False):
+    def calculate_wake(self, yaw_angles=None, no_wake=False, VC_Opts=None):
         """
         Wrapper to the floris flow field calculate_wake method
 
@@ -42,7 +42,7 @@ class FlorisInterface():
         if yaw_angles is not None:
             self.floris.farm.set_yaw_angles(yaw_angles)
 
-        self.floris.farm.flow_field.calculate_wake(no_wake=no_wake)
+        self.floris.farm.flow_field.calculate_wake(no_wake=no_wake, VC_Opts=VC_Opts)
 
     def reinitialize_flow_field(self,
                                 wind_speed=None,
@@ -187,7 +187,7 @@ class FlorisInterface():
                         dimensions=dimensions,
                         origin=origin)
 
-    def get_flow_data(self, resolution=None, grid_spacing=10):
+    def get_flow_data(self, resolution=None, grid_spacing=10, VC_Opts=None, bounds_to_set=None):
         """
         Generate FlowData object corresponding to the floris instance.
 
@@ -214,6 +214,8 @@ class FlorisInterface():
             else:
                 print('Assuming model resolution')
                 resolution = self.floris.farm.flow_field.wake.velocity_model.model_grid_resolution
+        else:
+            print('Using user defined resolution', resolution)
 
         # Get a copy for the flow field so don't change underlying grid points
         flow_field = copy.deepcopy(self.floris.farm.flow_field)
@@ -227,9 +229,8 @@ class FlorisInterface():
                 "    The Resolution given to FlorisInterface.get_flow_field is ignored."
             )
             resolution = flow_field.wake.velocity_model.model_grid_resolution
-        flow_field.reinitialize_flow_field(with_resolution=resolution)
-        print(resolution)
-        flow_field.calculate_wake()
+        flow_field.reinitialize_flow_field(with_resolution=resolution,bounds_to_set=bounds_to_set)
+        flow_field.calculate_wake(VC_Opts=VC_Opts)
 
         order = "f"
         x = flow_field.x.flatten(order=order)

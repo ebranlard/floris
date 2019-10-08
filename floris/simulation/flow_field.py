@@ -14,6 +14,8 @@ from ..utilities import Vec3
 from ..utilities import cosd, sind, tand
 from scipy.interpolate import griddata
 
+from vortexcylinder.Solver import Ct_const_cutoff
+from floris.VC import options_dict
 
 class FlowField():
     """
@@ -175,6 +177,7 @@ class FlowField():
             self._zmax = zmax
 
             resolution = self.wake.velocity_model.model_grid_resolution
+
             self.x, self.y, self.z = self._discretize_freestream_domain(
                 xmin, xmax, ymin, ymax, zmin, zmax, resolution)
             rotated_x, rotated_y, rotated_z = self._rotated_grid(
@@ -235,7 +238,12 @@ class FlowField():
             x = [coord.x1 for coord in coords]
             y = [coord.x2 for coord in coords]
             eps = 0.1
-            self._xmin = min(x) - 2 * self.max_diameter
+#             print('>>> FLOW FIELD HACK BOUNDS')
+#             self._xmin = min(x) - 10 * self.max_diameter
+#             self._xmax = max(x) + 20 * self.max_diameter
+#             self._ymin = min(y) - 10 * self.max_diameter
+#             self._ymax = max(y) + 10 * self.max_diameter
+            self._xmin = min(x) - 3 * self.max_diameter
             self._xmax = max(x) + 10 * self.max_diameter
             self._ymin = min(y) - 2 * self.max_diameter
             self._ymax = max(y) + 2 * self.max_diameter
@@ -259,7 +267,8 @@ class FlowField():
                                 air_density=None,
                                 wake=None,
                                 turbine_map=None,
-                                with_resolution=None):
+                                with_resolution=None,
+                                bounds_to_set=None):
         """
         Reiniaitilzies the flow field when a parameter needs to be 
         updated.
@@ -326,7 +335,7 @@ class FlowField():
         self.specified_wind_height = self.turbine_map.turbines[0].hub_height
 
         # Set the domain bounds
-        self.set_bounds()
+        self.set_bounds(bounds_to_set=bounds_to_set)
 
         # reinitialize the flow field
         self._compute_initialized_domain(with_resolution=with_resolution)
@@ -335,7 +344,7 @@ class FlowField():
         for turbine in self.turbine_map.turbines:
             turbine.reinitialize_turbine(self.turbulence_intensity)
 
-    def calculate_wake(self, no_wake=False):
+    def calculate_wake(self, no_wake=False, VC_Opts=None):
         """
         Updates the flow field based on turbine activity.
 
@@ -366,26 +375,63 @@ class FlowField():
         rotated_x, rotated_y, rotated_z = self._rotated_dir(
             self.wind_direction, center_of_rotation, rotated_map)
 
+
         # sort the turbine map
         sorted_map = rotated_map.sorted_in_x_as_list()
+
+        # --- VORTEX CYLINDER
+        if VC_Opts is None:
+            VC_Opts=options_dict()
+        if not VC_Opts['no_induction']:
+            for coord, turbine in sorted_map:
+                #print(type(coord.tolist()))
+                turbine.VC_WT.update_position(coord.tolist())
+                turbine.VC_WT.R*=VC_Opts['Rfact'] # HACK to increase rotor size
+            #print('Turbine',turbine.VC_WT.tostring())
 
         # calculate the velocity deficit and wake deflection on the mesh
         u_wake = np.zeros(np.shape(self.u))
         v_wake = np.zeros(np.shape(self.u))
         w_wake = np.zeros(np.shape(self.u))
-        for coord, turbine in sorted_map:
+        print(u_wake.shape)
+
+        #local_wind_speed = self.u_initial - u_wake
+        for i,(coord, turbine) in enumerate(sorted_map):
 
             # update the turbine based on the velocity at its hub
             turbine.update_velocities(
                 u_wake, coord, self, rotated_x, rotated_y, rotated_z)
 
+
             # get the wake deflecton field
             deflection = self._compute_turbine_wake_deflection(
                 rotated_x, rotated_y, turbine, coord, self)
 
+
             # get the velocity deficit accounting for the deflection
             turb_u_wake, turb_v_wake, turb_w_wake = self._compute_turbine_velocity_deficit(
                 rotated_x, rotated_y, rotated_z, turbine, coord, deflection, self.wake, self)
+
+            #  compute vortex cylinder induction
+            if not VC_Opts['no_induction']:
+                # update vortex cylinder velocity and loading 
+                avg_vel=turbine.average_velocity
+                turbine.VC_WT.update_wind([avg_vel,0,0]) # NOTE: rotated wind along x in FLORIS
+                r_bar_cut = 0.01
+                CT0       = turbine.Ct
+                R         = turbine.rotor_diameter/2
+                nCyl      = 1 # For now
+                Lambda    = 30 # if >20 then no swirl
+                vr_bar    = np.linspace(0,1.0,100)
+                Ct_AD     = Ct_const_cutoff(CT0,r_bar_cut,vr_bar) # TODO change me to distributed
+                turbine.VC_WT.update_loading(r=vr_bar*R, Ct=Ct_AD, Lambda=Lambda, nCyl=nCyl)
+
+                print('VC induction - U0={:.2f} - Ct={:.2f} - {}/{}'.format(turbine.average_velocity,turbine.Ct,i+1,len(sorted_map)))
+                root  = False
+                longi = False
+                tang  = True 
+                ux,uy,uz = turbine.VC_WT.compute_u(rotated_x,rotated_y,rotated_z,root=root,longi=longi,tang=tang, only_ind=True, no_wake=True)
+                ux=-ux # Weird Floris convention
 
             # include turbulence model for the gaussian wake model from Porte-Agel
             if self.wake.velocity_model.model_string == 'gauss':
@@ -425,10 +471,22 @@ class FlowField():
 
             # combine this turbine's wake into the full wake field
             if not no_wake:
+                # First combine inductions
+                if not VC_Opts['no_induction']:
+                    if VC_Opts['blend']:
+                        u_wake = self.wake.combination_function(u_wake, ux)
+                        v_wake = (v_wake + uy)
+                        w_wake = (w_wake + uz)
+                    else:
+                        u_wake = (u_wake + ux)
+                        v_wake = (v_wake + uy)
+                        w_wake = (w_wake + uz)
+                # Then combine wake deficits
                 # TODO: why not use the wake combination scheme in every component?
                 u_wake = self.wake.combination_function(u_wake, turb_u_wake)
                 v_wake = (v_wake + turb_v_wake)
                 w_wake = (w_wake + turb_w_wake)
+
 
         # apply the velocity deficit field to the freestream
         if not no_wake:

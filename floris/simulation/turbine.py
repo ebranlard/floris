@@ -15,6 +15,9 @@ from scipy.interpolate import griddata
 from ..utilities import cosd, sind, tand
 
 
+from vortexcylinder.WindTurbine import WindTurbine
+
+
 class Turbine():
     """
     Turbine is a class containing objects pertaining to the individual 
@@ -100,6 +103,11 @@ class Turbine():
 
         # initialize to an invalid value until calculated
         self.air_density = -1
+
+        # Initialize a vortex cylinder turbine
+        self.VC_WT=WindTurbine(R=self.rotor_diameter/2,
+                r_hub=[0,0,self.hub_height], # TODO TODO position?
+                e_shaft_yaw0=[1,0,0],e_vert=[0,0,1])
 
     # Private methods
 
@@ -285,6 +293,16 @@ class Turbine():
             rotated_y,
             rotated_z
         )
+        #print('velo shape',self.velocities.shape,len(self.grid))
+        #yPts = np.array([point[0] for point in self.grid])
+        #zPts = np.array([point[1] for point in self.grid])
+        #print(self.grid)
+        #print(yPts)
+        #print(zPts)
+        #import matplotlib.pyplot  as  plt
+        #plt.plot(yPts,self.velocities)
+        #plt.plot(zPts,self.velocities)
+        #plt.show()
 
     def reinitialize_turbine(self, turbulence_intensity):
         """
@@ -315,6 +333,10 @@ class Turbine():
             >>> floris.farm.turbines[0].set_yaw_angle(20.0)
         """
         self._yaw_angle = yaw_angle
+
+        # Vortex cylinder
+        print('>>> turbine.py : set yaw VC_WT')
+        self.VC_WT.WT.update_yaw_pos(yaw_angle*np.pi/180) # NOTE radians
 
     # Getters & Setters
 

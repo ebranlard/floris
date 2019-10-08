@@ -119,9 +119,9 @@
         },
         "curl": {
           "model_grid_resolution": [
-            250,
-            100,
-            75
+            25,
+            10,
+            7
           ],
           "initial_deficit": 2.0,
           "dissipation": 0.06,
