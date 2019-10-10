@@ -17,6 +17,46 @@ from scipy.interpolate import griddata
 from vortexcylinder.Solver import Ct_const_cutoff
 from floris.VC import options_dict
 
+# from pybra.colors import *
+# def get_cmap(minSpeed,maxSpeed):
+#     DS=0.0001
+#     # MathematicaDarkRainbow=[(60 /255,86 /255,146/255), (64 /255,87 /255,142/255), (67 /255,107/255,98 /255), (74 /255,121/255,69 /255), (106/255,141/255,61 /255), (159/255,171/255,67 /255), (207/255,195/255,77 /255), (223/255,186/255,83 /255), (206/255,128/255,76 /255), (186/255,61 /255,58 /255)]
+# 
+#     #     ManuDarkOrange  = np.array([198 ,106,1   ])/255.;
+#     #     ManuLightOrange = np.array([255.,212,96  ])/255.;
+#     # (1,212/255,96/255),  # Light Orange
+#     # (159/255,159/255,204/255), # Light Blue
+#     #     MathematicaLightGreen = np.array([158,204,170 ])/255.;
+#     # (159/255,159/255,204/255), # Light Blue
+#     seq=[
+#     (63/255 ,63/255 ,153/255), # Dark Blue
+#     (159/255,159/255,204/255), # Light Blue
+#     (158/255,204/255,170/255), # Light Green
+#     (1,212/255,96/255),  # Light Orange
+#     (1,1,1),  # White
+#     (1,1,1),  # White
+#     (1,1,1),  # White
+#     (138/255 ,42/255 ,93/255), # DarkRed
+#     ]
+#     valuesOri=np.array([
+#     minSpeed,  # Dark Blue
+#     0.90,
+#     0.95,
+#     0.98,
+#     1.00-DS , # White
+#     1.00    , # White
+#     1.00+DS , # White
+#     maxSpeed         # DarkRed
+#     ])
+#     values=(valuesOri-min(valuesOri))/(max(valuesOri)-min(valuesOri))
+# 
+#     valuesOri=np.around(valuesOri[np.where(np.diff(valuesOri)>DS)[0]],2)
+# 
+#     cmap= make_colormap(seq,values=values)
+#     return cmap,valuesOri
+
+
+
 class FlowField():
     """
     Object containing flow field information.
@@ -238,12 +278,7 @@ class FlowField():
             x = [coord.x1 for coord in coords]
             y = [coord.x2 for coord in coords]
             eps = 0.1
-#             print('>>> FLOW FIELD HACK BOUNDS')
-#             self._xmin = min(x) - 10 * self.max_diameter
-#             self._xmax = max(x) + 20 * self.max_diameter
-#             self._ymin = min(y) - 10 * self.max_diameter
-#             self._ymax = max(y) + 10 * self.max_diameter
-            self._xmin = min(x) - 3 * self.max_diameter
+            self._xmin = min(x) - 2 * self.max_diameter
             self._xmax = max(x) + 10 * self.max_diameter
             self._ymin = min(y) - 2 * self.max_diameter
             self._ymax = max(y) + 2 * self.max_diameter
@@ -395,6 +430,10 @@ class FlowField():
         w_wake = np.zeros(np.shape(self.u))
         print(u_wake.shape)
 
+        u_wake_vc = np.zeros(np.shape(self.u))
+        v_wake_vc = np.zeros(np.shape(self.u))
+        w_wake_vc = np.zeros(np.shape(self.u))
+
         #local_wind_speed = self.u_initial - u_wake
         for i,(coord, turbine) in enumerate(sorted_map):
 
@@ -415,24 +454,44 @@ class FlowField():
             #  compute vortex cylinder induction
             if not VC_Opts['no_induction']:
                 # update vortex cylinder velocity and loading 
-                avg_vel=turbine.average_velocity
-                turbine.VC_WT.update_wind([avg_vel,0,0]) # NOTE: rotated wind along x in FLORIS
+                U0=turbine.average_velocity
+                turbine.VC_WT.update_wind([U0,0,0]) # NOTE: rotated wind along x in FLORIS
                 r_bar_cut = 0.01
                 CT0       = turbine.Ct
-                R         = turbine.rotor_diameter/2
+                R         = turbine.rotor_diameter/2* VC_Opts['Rfact']
                 nCyl      = 1 # For now
                 Lambda    = 30 # if >20 then no swirl
                 vr_bar    = np.linspace(0,1.0,100)
                 Ct_AD     = Ct_const_cutoff(CT0,r_bar_cut,vr_bar) # TODO change me to distributed
+                turbine.VC_WT.R = R 
                 turbine.VC_WT.update_loading(r=vr_bar*R, Ct=Ct_AD, Lambda=Lambda, nCyl=nCyl)
-
-                print('VC induction - U0={:.2f} - Ct={:.2f} - {}/{}'.format(turbine.average_velocity,turbine.Ct,i+1,len(sorted_map)))
+                turbine.VC_WT.gamma_t= turbine.VC_WT.gamma_t*VC_Opts['GammaFact']
+                print('VC induction - U0={:.2f} - Ct={:.2f} - gamma_t_bar={:.3f} - {}/{}'.format(U0,CT0,turbine.VC_WT.gamma_t[0]/U0,i+1,len(sorted_map)))
                 root  = False
                 longi = False
                 tang  = True 
                 ux,uy,uz = turbine.VC_WT.compute_u(rotated_x,rotated_y,rotated_z,root=root,longi=longi,tang=tang, only_ind=True, no_wake=True)
-                ux=-ux # Weird Floris convention
-
+                u_wake_vc += ux
+                v_wake_vc += uy
+                w_wake_vc += uz
+#                 if uz.shape[0]>10:
+# #                     uz1 = np.squeeze(uz[:,:,0], axis=(2,))
+# #                     ux1 = np.squeeze(ux[:,:,0], axis=(2,))
+#                     uz1 = ux[:,:,0]
+#                     ux1 = uy[:,:,0]
+#                     print(ux1.shape)
+#                     print(rotated_z.shape)
+#                     Z   = rotated_x[:,:,0]
+#                     X   = rotated_y[:,:,0]
+#                     import matplotlib.pyplot as plt
+#                     fig=plt.figure()
+#                     ax=fig.add_subplot(111)
+#                     #Speed=np.sqrt(uz1**2+ux1**2)
+#                     Speed=(U0+uz1)/U0
+#                     cmap,_=get_cmap(0.5,1.1)
+#                     im=ax.contourf(Z/R,X/R,Speed,levels=30, vmin=0.5, vmax=1.1, cmap=cmap)
+#                     cb=fig.colorbar(im)
+#                     plt.show()
             # include turbulence model for the gaussian wake model from Porte-Agel
             if self.wake.velocity_model.model_string == 'gauss':
 
@@ -471,21 +530,23 @@ class FlowField():
 
             # combine this turbine's wake into the full wake field
             if not no_wake:
-                # First combine inductions
-                if not VC_Opts['no_induction']:
-                    if VC_Opts['blend']:
-                        u_wake = self.wake.combination_function(u_wake, ux)
-                        v_wake = (v_wake + uy)
-                        w_wake = (w_wake + uz)
-                    else:
-                        u_wake = (u_wake + ux)
-                        v_wake = (v_wake + uy)
-                        w_wake = (w_wake + uz)
-                # Then combine wake deficits
                 # TODO: why not use the wake combination scheme in every component?
                 u_wake = self.wake.combination_function(u_wake, turb_u_wake)
                 v_wake = (v_wake + turb_v_wake)
                 w_wake = (w_wake + turb_w_wake)
+        
+
+
+#         if VC_Opts['blend']:
+#             #u_wake = (u_wake - u_wake_vc)
+#             v_wake = (v_wake + v_wake_vc)
+#             w_wake = (w_wake + w_wake_vc)
+#         else:
+        u_wake = (u_wake - u_wake_vc)
+        v_wake = (v_wake + v_wake_vc)
+        w_wake = (w_wake + w_wake_vc)
+
+
 
 
         # apply the velocity deficit field to the freestream
@@ -494,6 +555,28 @@ class FlowField():
             self.u = self.u_initial - u_wake
             self.v = self.v_initial + v_wake
             self.w = self.w_initial + w_wake
+
+#         if self.u.shape[0]>10:
+#             Z   = rotated_x[:,:,1]
+#             X   = rotated_y[:,:,1]
+#             import matplotlib.pyplot as plt
+#             fig=plt.figure()
+#             ax=fig.add_subplot(111)
+#             U0=turbine.average_velocity
+#             print('U0',U0,'Ct',turbine.Ct)
+#             Speed=(self.u[:,:,1])/U0
+#             Speed=(self.u[:,:,1])/U0
+#             print(np.min(Speed.ravel()), np.max(Speed.ravel()))
+#             cmap,valuesOri=get_cmap(0.5,1.1)
+#             #im=ax.contourf(Z,X,Speed,levels=100, vmin=0.5, vmax=1.1, cmap=cmap)
+#             im = ax.pcolormesh(Z, X, Speed, cmap=cmap, vmin=0.5, vmax=1.1)
+#             cb=fig.colorbar(im)
+#             cb.set_ticks(valuesOri)
+#             cb.set_ticklabels([str(v) for v in valuesOri])
+#             plt.show()
+# 
+
+
 
         # rotate the grid if it is curl
         if self.wake.velocity_model.model_string == 'curl':
