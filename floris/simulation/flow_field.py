@@ -14,8 +14,9 @@ from ..utilities import Vec3
 from ..utilities import cosd, sind, tand
 from scipy.interpolate import griddata
 
+import vortexcylinder
 from vortexcylinder.Solver import Ct_const_cutoff
-from floris.VC import options_dict
+from floris.induction import options_dict
 
 # from pybra.colors import *
 # def get_cmap(minSpeed,maxSpeed):
@@ -379,7 +380,7 @@ class FlowField():
         for turbine in self.turbine_map.turbines:
             turbine.reinitialize_turbine(self.turbulence_intensity)
 
-    def calculate_wake(self, no_wake=False, VC_Opts=None):
+    def calculate_wake(self, no_wake=False, Ind_Opts=None):
         """
         Updates the flow field based on turbine activity.
 
@@ -414,14 +415,14 @@ class FlowField():
         # sort the turbine map
         sorted_map = rotated_map.sorted_in_x_as_list()
 
-        # --- VORTEX CYLINDER
-        if VC_Opts is None:
-            VC_Opts=options_dict()
-        if not VC_Opts['no_induction']:
+        # --- Induction models
+        if Ind_Opts is None:
+            Ind_Opts=options_dict()
+        if not Ind_Opts['no_induction']:
             for coord, turbine in sorted_map:
                 #print(type(coord.tolist()))
                 turbine.VC_WT.update_position(coord.tolist())
-                turbine.VC_WT.R*=VC_Opts['Rfact'] # HACK to increase rotor size
+                turbine.VC_WT.R*=Ind_Opts['Rfact'] # HACK to increase rotor size
             #print('Turbine',turbine.VC_WT.tostring())
 
         # calculate the velocity deficit and wake deflection on the mesh
@@ -430,121 +431,149 @@ class FlowField():
         w_wake = np.zeros(np.shape(self.u))
         print(u_wake.shape)
 
-        u_wake_vc = np.zeros(np.shape(self.u))
-        v_wake_vc = np.zeros(np.shape(self.u))
-        w_wake_vc = np.zeros(np.shape(self.u))
+        def compute_wakes(u_wake,v_wake,w_wake,u_ind=None,v_ind=None,w_ind=None):
+            if u_ind is None:
+                u_ind=0
 
-        #local_wind_speed = self.u_initial - u_wake
-        for i,(coord, turbine) in enumerate(sorted_map):
+            for i,(coord, turbine) in enumerate(sorted_map):
 
-            # update the turbine based on the velocity at its hub
-            turbine.update_velocities(
-                u_wake, coord, self, rotated_x, rotated_y, rotated_z)
+                # update the turbine based on the velocity at its hub
+                turbine.update_velocities(
+                    u_wake-u_ind, coord, self, rotated_x, rotated_y, rotated_z)
 
-
-            # get the wake deflecton field
-            deflection = self._compute_turbine_wake_deflection(
-                rotated_x, rotated_y, turbine, coord, self)
+                # get the wake deflecton field
+                deflection = self._compute_turbine_wake_deflection(
+                    rotated_x, rotated_y, turbine, coord, self)
 
 
-            # get the velocity deficit accounting for the deflection
-            turb_u_wake, turb_v_wake, turb_w_wake = self._compute_turbine_velocity_deficit(
-                rotated_x, rotated_y, rotated_z, turbine, coord, deflection, self.wake, self)
+                # get the velocity deficit accounting for the deflection
+                turb_u_wake, turb_v_wake, turb_w_wake = self._compute_turbine_velocity_deficit(
+                    rotated_x, rotated_y, rotated_z, turbine, coord, deflection, self.wake, self)
 
-            #  compute vortex cylinder induction
-            if not VC_Opts['no_induction']:
-                # update vortex cylinder velocity and loading 
-                U0=turbine.average_velocity
-                turbine.VC_WT.update_wind([U0,0,0]) # NOTE: rotated wind along x in FLORIS
-                r_bar_cut = 0.01
-                CT0       = turbine.Ct
-                R         = turbine.rotor_diameter/2* VC_Opts['Rfact']
-                nCyl      = 1 # For now
-                Lambda    = 30 # if >20 then no swirl
-                vr_bar    = np.linspace(0,1.0,100)
-                Ct_AD     = Ct_const_cutoff(CT0,r_bar_cut,vr_bar) # TODO change me to distributed
-                turbine.VC_WT.R = R 
-                turbine.VC_WT.update_loading(r=vr_bar*R, Ct=Ct_AD, Lambda=Lambda, nCyl=nCyl)
-                turbine.VC_WT.gamma_t= turbine.VC_WT.gamma_t*VC_Opts['GammaFact']
-                print('VC induction - U0={:.2f} - Ct={:.2f} - gamma_t_bar={:.3f} - {}/{}'.format(U0,CT0,turbine.VC_WT.gamma_t[0]/U0,i+1,len(sorted_map)))
-                root  = False
-                longi = False
-                tang  = True 
-                ux,uy,uz = turbine.VC_WT.compute_u(rotated_x,rotated_y,rotated_z,root=root,longi=longi,tang=tang, only_ind=True, no_wake=True)
-                u_wake_vc += ux
-                v_wake_vc += uy
-                w_wake_vc += uz
-#                 if uz.shape[0]>10:
-# #                     uz1 = np.squeeze(uz[:,:,0], axis=(2,))
-# #                     ux1 = np.squeeze(ux[:,:,0], axis=(2,))
-#                     uz1 = ux[:,:,0]
-#                     ux1 = uy[:,:,0]
-#                     print(ux1.shape)
-#                     print(rotated_z.shape)
-#                     Z   = rotated_x[:,:,0]
-#                     X   = rotated_y[:,:,0]
-#                     import matplotlib.pyplot as plt
-#                     fig=plt.figure()
-#                     ax=fig.add_subplot(111)
-#                     #Speed=np.sqrt(uz1**2+ux1**2)
-#                     Speed=(U0+uz1)/U0
-#                     cmap,_=get_cmap(0.5,1.1)
-#                     im=ax.contourf(Z/R,X/R,Speed,levels=30, vmin=0.5, vmax=1.1, cmap=cmap)
-#                     cb=fig.colorbar(im)
-#                     plt.show()
-            # include turbulence model for the gaussian wake model from Porte-Agel
-            if self.wake.velocity_model.model_string == 'gauss':
+                # include turbulence model for the gaussian wake model from Porte-Agel
+                if self.wake.velocity_model.model_string == 'gauss':
 
-                # compute area overlap of wake on other turbines and update downstream turbine turbulence intensities
-                for coord_ti, turbine_ti in sorted_map:
+                    # compute area overlap of wake on other turbines and update downstream turbine turbulence intensities
+                    for coord_ti, turbine_ti in sorted_map:
 
-                    if coord_ti.x1 > coord.x1 and np.abs(coord.x2 - coord_ti.x2) < 2*turbine.rotor_diameter:
-                        # only assess the effects of the current wake
+                        if coord_ti.x1 > coord.x1 and np.abs(coord.x2 - coord_ti.x2) < 2*turbine.rotor_diameter:
+                            # only assess the effects of the current wake
 
-                        freestream_velocities = turbine_ti.calculate_swept_area_velocities(
-                            self.wind_direction,
-                            self.u_initial,
-                            coord_ti,
-                            rotated_x,
-                            rotated_y,
-                            rotated_z)
-
-                        wake_velocities = turbine_ti.calculate_swept_area_velocities(
-                            self.wind_direction,
-                            self.u_initial - turb_u_wake,
-                            coord_ti,
-                            rotated_x,
-                            rotated_y,
-                            rotated_z)
-
-                        area_overlap = self._calculate_area_overlap(
-                            wake_velocities, freestream_velocities, turbine)
-                        if area_overlap > 0.0:
-                            turbine_ti.turbulence_intensity = turbine_ti.calculate_turbulence_intensity(
-                                self.turbulence_intensity,
-                                self.wake.velocity_model,
+                            freestream_velocities = turbine_ti.calculate_swept_area_velocities(
+                                self.wind_direction,
+                                self.u_initial-u_ind,
                                 coord_ti,
-                                coord,
-                                turbine
-                            )
+                                rotated_x,
+                                rotated_y,
+                                rotated_z)
 
-            # combine this turbine's wake into the full wake field
-            if not no_wake:
-                # TODO: why not use the wake combination scheme in every component?
-                u_wake = self.wake.combination_function(u_wake, turb_u_wake)
-                v_wake = (v_wake + turb_v_wake)
-                w_wake = (w_wake + turb_w_wake)
-        
+                            wake_velocities = turbine_ti.calculate_swept_area_velocities(
+                                self.wind_direction,
+                                self.u_initial - turb_u_wake -u_ind,
+                                coord_ti,
+                                rotated_x,
+                                rotated_y,
+                                rotated_z)
+
+                            area_overlap = self._calculate_area_overlap(
+                                wake_velocities, freestream_velocities, turbine)
+                            if area_overlap > 0.0:
+                                turbine_ti.turbulence_intensity = turbine_ti.calculate_turbulence_intensity(
+                                    self.turbulence_intensity,
+                                    self.wake.velocity_model,
+                                    coord_ti,
+                                    coord,
+                                    turbine
+                                )
+
+                # combine this turbine's wake into the full wake field
+                if not no_wake:
+                    # TODO: why not use the wake combination scheme in every component?
+                    u_wake = self.wake.combination_function(u_wake, turb_u_wake)
+                    v_wake = (v_wake + turb_v_wake)
+                    w_wake = (w_wake + turb_w_wake)
+    #         if Ind_Opts['blend']:
+    #             #u_wake = (u_wake - u_ind)
+    #             v_wake = (v_wake + v_ind)
+    #             w_wake = (w_wake + w_ind)
+    #         else:
+                # ------- END OF FOR LOOP ON TURBINES
+            return u_wake, v_wake, w_wake
+
+        def compute_induction(u_ind=None,v_ind=None,w_ind=None):
+            if u_ind is None:
+                u_ind = np.zeros(np.shape(self.u))
+                v_ind = np.zeros(np.shape(self.u))
+                w_ind = np.zeros(np.shape(self.u))
+
+            for i,(coord, turbine) in enumerate(sorted_map):
+                #  compute Induction
+                if not Ind_Opts['no_induction']:
+                    # update vortex cylinder velocity and loading 
+                    U0=turbine.average_velocity
+                    turbine.VC_WT.update_wind([U0,0,0]) # NOTE: rotated wind along x in FLORIS
+                    r_bar_cut = 0.01
+                    CT0       = turbine.Ct
+                    R         = turbine.rotor_diameter/2* Ind_Opts['Rfact']
+                    nCyl      = 1 # For now
+                    Lambda    = 30 # if >20 then no swirl
+                    vr_bar    = np.linspace(0,1.0,100)
+                    Ct_AD     = Ct_const_cutoff(CT0,r_bar_cut,vr_bar) # TODO change me to distributed
+                    turbine.VC_WT.R = R 
+                    turbine.VC_WT.update_loading(r=vr_bar*R, Ct=Ct_AD, Lambda=Lambda, nCyl=nCyl)
+                    turbine.VC_WT.gamma_t= turbine.VC_WT.gamma_t*Ind_Opts['GammaFact']
+#                     print('VC induction - U0={:5.2f} - Ct={:4.2f} - gamma_t_bar={:7.3f} - {}/{}'.format(U0,CT0,turbine.VC_WT.gamma_t[0]/U0,i+1,len(sorted_map)))
+                    root  = False
+                    longi = False
+                    tang  = True 
+                    ux,uy,uz = turbine.VC_WT.compute_u(rotated_x,rotated_y,rotated_z,root=root,longi=longi,tang=tang, only_ind=True, no_wake=True, Model = Ind_Opts['Model'], ground=Ind_Opts['Ground'])
+                    u_ind += ux
+                    v_ind += uy
+                    w_ind += uz
+    #                 if uz.shape[0]>10:
+    # #                     uz1 = np.squeeze(uz[:,:,0], axis=(2,))
+    # #                     ux1 = np.squeeze(ux[:,:,0], axis=(2,))
+    #                     uz1 = ux[:,:,0]
+    #                     ux1 = uy[:,:,0]
+    #                     print(ux1.shape)
+    #                     print(rotated_z.shape)
+    #                     Z   = rotated_x[:,:,0]
+    #                     X   = rotated_y[:,:,0]
+    #                     import matplotlib.pyplot as plt
+    #                     fig=plt.figure()
+    #                     ax=fig.add_subplot(111)
+    #                     #Speed=np.sqrt(uz1**2+ux1**2)
+    #                     Speed=(U0+uz1)/U0
+    #                     cmap,_=get_cmap(0.5,1.1)
+    #                     im=ax.contourf(Z/R,X/R,Speed,levels=30, vmin=0.5, vmax=1.1, cmap=cmap)
+    #                     cb=fig.colorbar(im)
+    #                     plt.show()
+            return u_ind,v_ind,w_ind
+
+        def show_CT():
+            for i,(coord, turbine) in enumerate(sorted_map):
+                U0=turbine.average_velocity
+                CT0       = turbine.Ct
+                CP0       = turbine.Cp
+                print('               U0={:6.3f} - Ct={:5.3f} - Cp={:5.3f} - {}/{}'.format(U0,CT0,CP0,i+1,len(sorted_map)))
 
 
-#         if VC_Opts['blend']:
-#             #u_wake = (u_wake - u_wake_vc)
-#             v_wake = (v_wake + v_wake_vc)
-#             w_wake = (w_wake + w_wake_vc)
-#         else:
-        u_wake = (u_wake - u_wake_vc)
-        v_wake = (v_wake + v_wake_vc)
-        w_wake = (w_wake + w_wake_vc)
+        #--- Main computation
+        u_wake, v_wake, w_wake = compute_wakes(u_wake,v_wake,w_wake)
+        show_CT()
+
+        if not Ind_Opts['no_induction']:
+            for nIt in np.arange(1,5):
+                print('>>> Iteration ',nIt)
+                u_ind, v_ind, w_ind    = compute_induction()
+                u_wake, v_wake, w_wake = np.zeros(np.shape(self.u)),np.zeros(np.shape(self.u)), np.zeros(np.shape(self.u))
+                u_wake, v_wake, w_wake = compute_wakes(u_wake,v_wake,w_wake,u_ind,v_ind,w_ind)
+    #             u_wake, v_wake, w_wake = compute_wakes(u_wake,v_wake,w_wake)
+                show_CT()
+
+            u_wake = (u_wake - u_ind)
+            v_wake = (v_wake + v_ind)
+            w_wake = (w_wake + w_ind)
 
 
 

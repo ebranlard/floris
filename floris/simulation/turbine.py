@@ -104,7 +104,7 @@ class Turbine():
         # initialize to an invalid value until calculated
         self.air_density = -1
 
-        # Initialize a vortex cylinder turbine
+        # Initialize a vortex turbine (for induction computation)
         self.VC_WT=WindTurbine(R=self.rotor_diameter/2,
                 r_hub=[0,0,self.hub_height], # TODO TODO position?
                 e_shaft_yaw0=[1,0,0],e_vert=[0,0,1])
@@ -334,7 +334,7 @@ class Turbine():
         """
         self._yaw_angle = yaw_angle
 
-        # Vortex cylinder
+        # Vortex wind turbine
         print('>>> turbine.py : set yaw VC_WT')
         self.VC_WT.WT.update_yaw_pos(yaw_angle*np.pi/180) # NOTE radians
 
