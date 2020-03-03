@@ -15,7 +15,7 @@ from scipy.interpolate import griddata
 from ..utilities import cosd, sind, tand
 
 
-from vortexcylinder.WindTurbine import WindTurbine
+from wiz.WindTurbine import WindTurbine
 
 
 class Turbine():

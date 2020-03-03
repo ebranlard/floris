@@ -14,9 +14,64 @@ from ..utilities import Vec3
 from ..utilities import cosd, sind, tand
 from scipy.interpolate import griddata
 
-import vortexcylinder
-from vortexcylinder.Solver import Ct_const_cutoff
+import wiz
+from wiz.Solver import Ct_const_cutoff
 from floris.induction import options_dict
+
+
+import time
+def pretty_time(t):
+    # fPrettyTime: returns a 6-characters string corresponding to the input time in seconds.
+    #   fPrettyTime(612)=='10m12s'
+    # AUTHOR: E. Branlard
+    if(t<0):
+        s='------';
+    elif (t<1) :
+        c=np.floor(t*100);
+        s='{:2d}.{:02d}s'.format(0,int(c))
+    elif(t<60) :
+        s=np.floor(t);
+        c=np.floor((t-s)*100);
+        s='{:2d}.{:02d}s'.format(int(s),int(c))
+    elif(t<3600) :
+        m=np.floor(t/60);
+        s=np.mod( np.floor(t), 60);
+        s='{:2d}m{:02d}s'.format(int(m),int(s))
+    elif(t<86400) :
+        h=np.floor(t/3600);
+        m=np.floor(( np.mod( np.floor(t) , 3600))/60);
+        s='{:2d}h{:02d}m'.format(int(h),int(m))
+    elif(t<8553600) : #below 3month
+        d=np.floor(t/86400);
+        h=np.floor( np.mod(np.floor(t), 86400)/3600);
+        s='{:2d}d{:02d}h'.format(int(d),int(h))
+    elif(t<31536000):
+        m=t/(3600*24*30.5);
+        s='{:4.1f}mo'.format(m)
+        #s='+3mon.';
+    else:
+        y=t/(3600*24*365.25);
+        s='{:.1f}y'.format(y)
+    return s
+
+class Timer(object):
+    """ Time a set of commands, as a context manager
+    with Timer('A name'):
+        cmd1
+        cmd2
+    """
+    def __init__(self, name=None):
+        self.name = name
+
+    def __enter__(self):
+        self.tstart = time.time()
+
+    def __exit__(self, type, value, traceback):
+        print('[TIME] ',end='')
+        if self.name:
+            print('{:31s}'.format(self.name[:30]),end='')
+        print('Elapsed: {:6s}'.format(pretty_time(time.time() - self.tstart)))
+
 
 # from pybra.colors import *
 # def get_cmap(minSpeed,maxSpeed):
@@ -436,6 +491,7 @@ class FlowField():
                 u_ind=0
 
             for i,(coord, turbine) in enumerate(sorted_map):
+                print('.',end='')
 
                 # update the turbine based on the velocity at its hub
                 turbine.update_velocities(
@@ -492,12 +548,8 @@ class FlowField():
                     u_wake = self.wake.combination_function(u_wake, turb_u_wake)
                     v_wake = (v_wake + turb_v_wake)
                     w_wake = (w_wake + turb_w_wake)
-    #         if Ind_Opts['blend']:
-    #             #u_wake = (u_wake - u_ind)
-    #             v_wake = (v_wake + v_ind)
-    #             w_wake = (w_wake + w_ind)
-    #         else:
-                # ------- END OF FOR LOOP ON TURBINES
+            # ------- END OF FOR LOOP ON TURBINES
+            print('')
             return u_wake, v_wake, w_wake
 
         def compute_induction(u_ind=None,v_ind=None,w_ind=None):
@@ -526,6 +578,7 @@ class FlowField():
                     root  = False
                     longi = False
                     tang  = True 
+                    print('.',end='')
                     ux,uy,uz = turbine.VC_WT.compute_u(rotated_x,rotated_y,rotated_z,root=root,longi=longi,tang=tang, only_ind=True, no_wake=True, Model = Ind_Opts['Model'], ground=Ind_Opts['Ground'])
                     u_ind += ux
                     v_ind += uy
@@ -548,9 +601,11 @@ class FlowField():
     #                     im=ax.contourf(Z/R,X/R,Speed,levels=30, vmin=0.5, vmax=1.1, cmap=cmap)
     #                     cb=fig.colorbar(im)
     #                     plt.show()
+            print('')
+
             return u_ind,v_ind,w_ind
 
-        def show_CT():
+        def print_CT():
             for i,(coord, turbine) in enumerate(sorted_map):
                 U0=turbine.average_velocity
                 CT0       = turbine.Ct
@@ -559,17 +614,24 @@ class FlowField():
 
 
         #--- Main computation
-        u_wake, v_wake, w_wake = compute_wakes(u_wake,v_wake,w_wake)
-        show_CT()
+        print('Compute wakes...')
+        with Timer('Wake call'):
+            u_wake, v_wake, w_wake = compute_wakes(u_wake,v_wake,w_wake)
+#         print_CT()
 
         if not Ind_Opts['no_induction']:
-            for nIt in np.arange(1,5):
-                print('>>> Iteration ',nIt)
-                u_ind, v_ind, w_ind    = compute_induction()
-                u_wake, v_wake, w_wake = np.zeros(np.shape(self.u)),np.zeros(np.shape(self.u)), np.zeros(np.shape(self.u))
-                u_wake, v_wake, w_wake = compute_wakes(u_wake,v_wake,w_wake,u_ind,v_ind,w_ind)
+            if Ind_Opts['nIter']<1:
+                raise Exception('Minimum one iteration is required when using induction')
+            for nIt in np.arange(1,Ind_Opts['nIter']+1):
+                print('>>> Compute induction, iteration: ',nIt)
+                with Timer('Induction call'):
+                    u_ind, v_ind, w_ind    = compute_induction()
+                    u_wake, v_wake, w_wake = np.zeros(np.shape(self.u)),np.zeros(np.shape(self.u)), np.zeros(np.shape(self.u))
+                print('>>> Compute wakes, iteration',nIt)
+                with Timer('Wake call'):
+                    u_wake, v_wake, w_wake = compute_wakes(u_wake,v_wake,w_wake,u_ind,v_ind,w_ind)
     #             u_wake, v_wake, w_wake = compute_wakes(u_wake,v_wake,w_wake)
-                show_CT()
+#                 print_CT()
 
             u_wake = (u_wake - u_ind)
             v_wake = (v_wake + v_ind)
