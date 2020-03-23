@@ -206,16 +206,17 @@ class FlorisInterface():
 
         if resolution is None:
             if not self.floris.farm.flow_field.wake.velocity_model.requires_resolution:
-                print('Assuming grid with spacing %d' % grid_spacing)
+                #print('Assuming grid with spacing %d' % grid_spacing)
                 xmin, xmax, ymin, ymax, zmin, zmax = self.floris.farm.flow_field.domain_bounds
                 resolution = Vec3(1 + (xmax - xmin) / grid_spacing,
                                   1 + (ymax - ymin) / grid_spacing,
                                   1 + (zmax - zmin) / grid_spacing)
             else:
-                print('Assuming model resolution')
+                #print('Assuming model resolution')
                 resolution = self.floris.farm.flow_field.wake.velocity_model.model_grid_resolution
         else:
-            print('Using user defined resolution', resolution)
+            pass
+            #print('Using user defined resolution', resolution)
 
         # Get a copy for the flow field so don't change underlying grid points
         flow_field = copy.deepcopy(self.floris.farm.flow_field)

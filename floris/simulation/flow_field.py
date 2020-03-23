@@ -484,7 +484,6 @@ class FlowField():
         u_wake = np.zeros(np.shape(self.u))
         v_wake = np.zeros(np.shape(self.u))
         w_wake = np.zeros(np.shape(self.u))
-        print(u_wake.shape)
 
         def compute_wakes(u_wake,v_wake,w_wake,u_ind=None,v_ind=None,w_ind=None):
             if u_ind is None:
@@ -572,7 +571,12 @@ class FlowField():
                     vr_bar    = np.linspace(0,1.0,100)
                     Ct_AD     = Ct_const_cutoff(CT0,r_bar_cut,vr_bar) # TODO change me to distributed
                     turbine.VC_WT.R = R 
-                    turbine.VC_WT.update_loading(r=vr_bar*R, Ct=Ct_AD, Lambda=Lambda, nCyl=nCyl)
+                    # --- TODO: use this in the future
+                    #xopt = [ 0.16926954 , 0.3997195  , -0.48184335 , 0.39648173] # Match in induction zone
+                    #gamma_t_Ct = lambda x :   U0*gamma_CT_fun(x,*xopt)
+                    gamma_t_Ct = None
+
+                    turbine.VC_WT.update_loading(r=vr_bar*R, Ct=Ct_AD, Lambda=Lambda, nCyl=nCyl, gamma_t_Ct=gamma_t_Ct)
                     turbine.VC_WT.gamma_t= turbine.VC_WT.gamma_t*Ind_Opts['GammaFact']
 #                     print('VC induction - U0={:5.2f} - Ct={:4.2f} - gamma_t_bar={:7.3f} - {}/{}'.format(U0,CT0,turbine.VC_WT.gamma_t[0]/U0,i+1,len(sorted_map)))
                     root  = False
@@ -614,24 +618,34 @@ class FlowField():
 
 
         #--- Main computation
-        print('Compute wakes...')
-        with Timer('Wake call'):
+        print('Compute wakes...',end='')
+        with Timer('Wake call,       iteration:  {:d}'.format(0)):
             u_wake, v_wake, w_wake = compute_wakes(u_wake,v_wake,w_wake)
 #         print_CT()
+        PowerTot=0
+        nWT=len(sorted_map)
+        for coord, turbine in sorted_map:
+            PowerTot+=turbine.power
+        print('Avg Power per WT:',PowerTot/nWT/1000)
 
         if not Ind_Opts['no_induction']:
             if Ind_Opts['nIter']<1:
                 raise Exception('Minimum one iteration is required when using induction')
             for nIt in np.arange(1,Ind_Opts['nIter']+1):
-                print('>>> Compute induction, iteration: ',nIt)
-                with Timer('Induction call'):
+                print('>>> Compute induction, iteration: ',nIt,end='')
+                with Timer('Induction call,  iteration:  {:d}'.format(nIt)):
                     u_ind, v_ind, w_ind    = compute_induction()
                     u_wake, v_wake, w_wake = np.zeros(np.shape(self.u)),np.zeros(np.shape(self.u)), np.zeros(np.shape(self.u))
-                print('>>> Compute wakes, iteration',nIt)
-                with Timer('Wake call'):
+                print('>>> Compute wakes,     iteration: ',nIt,end='')
+                with Timer('Wake call,       iteration:  {:d}'.format(nIt)):
                     u_wake, v_wake, w_wake = compute_wakes(u_wake,v_wake,w_wake,u_ind,v_ind,w_ind)
     #             u_wake, v_wake, w_wake = compute_wakes(u_wake,v_wake,w_wake)
 #                 print_CT()
+                PowerTot=0
+                nWT=len(sorted_map)
+                for coord, turbine in sorted_map:
+                    PowerTot+=turbine.power
+                print('Avg Power per WT:',PowerTot/nWT/1000)
 
             u_wake = (u_wake - u_ind)
             v_wake = (v_wake + v_ind)
