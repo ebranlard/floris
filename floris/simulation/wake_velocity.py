@@ -541,8 +541,9 @@ class Gauss(WakeVelocity):
                 - 2 * b * ((y_locations - turbine_coord.x2) - delta) \
                 * ((z_locations - HH)) + c * ((z_locations - HH))**2))
 
-        velDef = (U_local * (1 - np.sqrt(1 - ((Ct * cosd(yaw)) \
-                / (8.0 * sigma_y * sigma_z / D**2)))) * totGauss)
+        Cteff = ((Ct * cosd(yaw)) / (8.0 * sigma_y * sigma_z / D**2))
+        Cteff[Cteff>1]=0.99 # NOTE: preventing blow up of equation below
+        velDef = (U_local * (1 - np.sqrt(1 - Cteff)) * totGauss)
         velDef[x_locations < xR] = 0
         velDef[x_locations > x0] = 0
 
