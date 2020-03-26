@@ -583,7 +583,7 @@ class FlowField():
                     longi = False
                     tang  = True 
                     print('.',end='')
-                    ux,uy,uz = turbine.VC_WT.compute_u(rotated_x,rotated_y,rotated_z,root=root,longi=longi,tang=tang, only_ind=True, no_wake=True, Model = Ind_Opts['Model'], ground=Ind_Opts['Ground'])
+                    ux,uy,uz = turbine.VC_WT.compute_u(rotated_x,rotated_y,rotated_z,root=root,longi=longi,tang=tang, only_ind=True, no_wake=True, Model = Ind_Opts['Model'], ground=Ind_Opts['Ground'], R_far_field=Ind_Opts['R_far_field'] )
                     u_ind += ux
                     v_ind += uy
                     w_ind += uz
